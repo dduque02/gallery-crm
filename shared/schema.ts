@@ -44,7 +44,15 @@ export const contacts = pgTable("contacts", {
   lifetimeValue: integer("lifetime_value").default(0),
 });
 
-export const insertContactSchema = createInsertSchema(contacts).omit({ id: true });
+export const insertContactSchema = createInsertSchema(contacts).omit({ id: true }).extend({
+  name: z.string().min(1).max(500),
+  email: z.string().max(500).nullable().optional(),
+  phone: z.string().max(100).nullable().optional(),
+  company: z.string().max(500).nullable().optional(),
+  notes: z.string().max(5000).nullable().optional(),
+  city: z.string().max(200).nullable().optional(),
+  country: z.string().max(200).nullable().optional(),
+});
 export type InsertContact = z.infer<typeof insertContactSchema>;
 export type Contact = typeof contacts.$inferSelect;
 
@@ -117,7 +125,15 @@ export const artworks = pgTable("artworks", {
   additionalDocuments: text("additional_documents"),
 });
 
-export const insertArtworkSchema = createInsertSchema(artworks).omit({ id: true });
+export const insertArtworkSchema = createInsertSchema(artworks).omit({ id: true }).extend({
+  title: z.string().min(1).max(500),
+  artistName: z.string().min(1).max(500),
+  medium: z.string().max(500).nullable().optional(),
+  dimensions: z.string().max(500).nullable().optional(),
+  description: z.string().max(10000).nullable().optional(),
+  provenance: z.string().max(10000).nullable().optional(),
+  notes: z.string().max(10000).nullable().optional(),
+});
 export type InsertArtwork = z.infer<typeof insertArtworkSchema>;
 export type Artwork = typeof artworks.$inferSelect;
 
@@ -157,7 +173,11 @@ export const deals = pgTable("deals", {
   advisorName: text("advisor_name"),
 });
 
-export const insertDealSchema = createInsertSchema(deals).omit({ id: true });
+export const insertDealSchema = createInsertSchema(deals).omit({ id: true }).extend({
+  title: z.string().min(1).max(500),
+  notes: z.string().max(5000).nullable().optional(),
+  lostReason: z.string().max(1000).nullable().optional(),
+});
 export type InsertDeal = z.infer<typeof insertDealSchema>;
 export type Deal = typeof deals.$inferSelect;
 

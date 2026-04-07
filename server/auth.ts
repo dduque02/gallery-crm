@@ -12,6 +12,7 @@ declare module "express-session" {
     userId: number;
     userRole: string;
     userName: string;
+    userEmail: string;
   }
 }
 
@@ -75,6 +76,7 @@ export function setupAuth(app: Express) {
       req.session.userId = user.id;
       req.session.userRole = user.role;
       req.session.userName = user.name;
+      req.session.userEmail = user.email;
 
       await new Promise<void>((resolve, reject) => {
         req.session.save((err) => (err ? reject(err) : resolve()));
@@ -117,7 +119,7 @@ export function setupAuth(app: Express) {
     }
     res.json({
       id: req.session.userId,
-      email: "",
+      email: req.session.userEmail || "",
       name: req.session.userName,
       role: req.session.userRole,
     });

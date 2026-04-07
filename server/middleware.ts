@@ -39,27 +39,27 @@ export function setupSecurity(app: Express) {
     : true;
   app.use(cors({ origin, credentials: true }));
 
+  // Rate limiting — login must be registered BEFORE the general limiter
+  const loginLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 5,
+    standardHeaders: "draft-7",
+    legacyHeaders: false,
+    keyGenerator: (req) => req.ip || req.socket.remoteAddress || "unknown",
+    message: { message: "Too many login attempts, please try again later." },
+  });
+  app.post("/api/login", loginLimiter);
+
   // Rate limiting — general API routes
   app.use(
     "/api/",
     rateLimit({
-      windowMs: 15 * 60 * 1000, // 15 minutes
-      max: 100,
-      standardHeaders: true,
-      legacyHeaders: false,
-      message: { message: "Too many requests, please try again later." },
-    }),
-  );
-
-  // Rate limiting — stricter for login attempts
-  app.use(
-    "/api/login",
-    rateLimit({
       windowMs: 15 * 60 * 1000,
-      max: 5,
-      standardHeaders: true,
+      max: 100,
+      standardHeaders: "draft-7",
       legacyHeaders: false,
-      message: { message: "Too many login attempts, please try again later." },
+      keyGenerator: (req) => req.ip || req.socket.remoteAddress || "unknown",
+      message: { message: "Too many requests, please try again later." },
     }),
   );
 

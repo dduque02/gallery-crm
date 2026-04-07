@@ -112,8 +112,8 @@ export async function registerRoutes(server: Server, app: Express) {
   });
   // Contacts — paginated
   app.get("/api/contacts", async (req, res) => {
-    const page = Number(req.query.page) || 1;
-    const pageSize = Number(req.query.pageSize) || 50;
+    const page = Math.max(1, Math.floor(Number(req.query.page) || 1));
+    const pageSize = Math.min(200, Math.max(1, Math.floor(Number(req.query.pageSize) || 50)));
     const search = (req.query.search as string) || "";
     const type = (req.query.type as string) || "all";
     const result = await storage.getContacts({ page, pageSize, search, type });
@@ -160,8 +160,8 @@ export async function registerRoutes(server: Server, app: Express) {
     res.json(locations);
   });
   app.get("/api/artworks", async (req, res) => {
-    const page = Number(req.query.page) || 1;
-    const pageSize = Number(req.query.pageSize) || 50;
+    const page = Math.max(1, Math.floor(Number(req.query.page) || 1));
+    const pageSize = Math.min(200, Math.max(1, Math.floor(Number(req.query.pageSize) || 50)));
     const search = (req.query.search as string) || "";
     const status = (req.query.status as string) || "all";
     const category = (req.query.category as string) || "all";
