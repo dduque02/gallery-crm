@@ -1,7 +1,7 @@
 import { eq, desc, ilike, or, sql, count, sum, and, ne, inArray, asc } from "drizzle-orm";
 import { db } from "./db";
 import {
-  contacts, artworks, deals, exhibitions, activities, artistSettings, followups,
+  contacts, artworks, deals, exhibitions, activities, artistSettings, followups, invoices, messages,
 } from "@shared/schema";
 import type {
   Contact, InsertContact,
@@ -11,6 +11,8 @@ import type {
   Activity, InsertActivity,
   ArtistSettings, InsertArtistSettings,
   Followup, InsertFollowup,
+  Invoice, InsertInvoice,
+  Message, InsertMessage,
 } from "@shared/schema";
 
 export interface PaginatedResult<T> {
@@ -50,8 +52,12 @@ export interface IStorage {
   updateExhibition(id: number, exhibition: Partial<InsertExhibition>): Promise<Exhibition | undefined>;
   deleteExhibition(id: number): Promise<boolean>;
 
+  // Deals by contact
+  getDealsByContactId(contactId: number): Promise<Deal[]>;
+
   // Activities
   getActivities(): Promise<Activity[]>;
+  getActivitiesByDealId(dealId: number): Promise<Activity[]>;
   createActivity(activity: InsertActivity): Promise<Activity>;
 
   // Artists (aggregated)
@@ -62,10 +68,33 @@ export interface IStorage {
 
   // Followups
   getFollowups(): Promise<Followup[]>;
+  getFollowupsByDealId(dealId: number): Promise<Followup[]>;
   getFollowup(id: number): Promise<Followup | undefined>;
   createFollowup(followup: InsertFollowup): Promise<Followup>;
   updateFollowup(id: number, followup: Partial<InsertFollowup>): Promise<Followup | undefined>;
   deleteFollowup(id: number): Promise<boolean>;
+
+  // Invoices
+  getInvoices(opts?: { contactId?: number; dateFrom?: string; dateTo?: string }): Promise<Invoice[]>;
+  getInvoice(id: number): Promise<Invoice | undefined>;
+  createInvoice(data: InsertInvoice): Promise<Invoice>;
+  updateInvoice(id: number, data: Partial<InsertInvoice>): Promise<Invoice | undefined>;
+  deleteInvoice(id: number): Promise<boolean>;
+  generateInvoiceNumber(): Promise<string>;
+
+  // Sales history (reads from invoices)
+  getSalesHistory(opts?: { dateFrom?: string; dateTo?: string; contactId?: number; advisorName?: string; search?: string }): Promise<Invoice[]>;
+  getSalesStats(): Promise<Record<string, any>>;
+
+  // LTV recalc
+  recalcContactLTV(contactId: number): Promise<void>;
+
+  // Messages
+  getMessages(opts?: { channel?: string; status?: string; contactId?: number }): Promise<Message[]>;
+  getMessage(id: number): Promise<Message | undefined>;
+  createMessage(data: InsertMessage): Promise<Message>;
+  updateMessage(id: number, data: Partial<InsertMessage>): Promise<Message | undefined>;
+  findContactByEmailOrPhone(email?: string, phone?: string): Promise<Contact | undefined>;
 
   // Stats (computed via SQL)
   getStats(): Promise<Record<string, any>>;
@@ -194,6 +223,9 @@ export class DatabaseStorage implements IStorage {
   async getDeals(): Promise<Deal[]> {
     return db.select().from(deals);
   }
+  async getDealsByContactId(contactId: number): Promise<Deal[]> {
+    return db.select().from(deals).where(eq(deals.contactId, contactId));
+  }
   async getDeal(id: number): Promise<Deal | undefined> {
     const [deal] = await db.select().from(deals).where(eq(deals.id, id));
     return deal;
@@ -236,6 +268,9 @@ export class DatabaseStorage implements IStorage {
   async getActivities(): Promise<Activity[]> {
     return db.select().from(activities).orderBy(desc(activities.date)).limit(50);
   }
+  async getActivitiesByDealId(dealId: number): Promise<Activity[]> {
+    return db.select().from(activities).where(eq(activities.dealId, dealId)).orderBy(desc(activities.date));
+  }
   async createActivity(data: InsertActivity): Promise<Activity> {
     const [activity] = await db.insert(activities).values(data).returning();
     return activity;
@@ -260,7 +295,7 @@ export class DatabaseStorage implements IStorage {
       if (categories.length === 1) {
         categoryFilter = sql`AND a1.category = ${categories[0]}`;
       } else if (categories.length > 1) {
-        categoryFilter = sql`AND a1.category IN ${sql.raw(`(${categories.map(c => `'${c.replace(/'/g, "''")}'`).join(",")})`)}`;
+        categoryFilter = sql`AND a1.category IN (${sql.join(categories.map(c => sql`${c}`), sql`, `)})`;
       }
     }
     // Filter by group: "active" (default) excludes for_review, "for_review" shows only those, "all" shows everything
@@ -300,6 +335,9 @@ export class DatabaseStorage implements IStorage {
   async getFollowups(): Promise<Followup[]> {
     return db.select().from(followups).orderBy(asc(followups.dueDate));
   }
+  async getFollowupsByDealId(dealId: number): Promise<Followup[]> {
+    return db.select().from(followups).where(eq(followups.dealId, dealId)).orderBy(asc(followups.dueDate));
+  }
   async getFollowup(id: number): Promise<Followup | undefined> {
     const [f] = await db.select().from(followups).where(eq(followups.id, id));
     return f;
@@ -315,6 +353,112 @@ export class DatabaseStorage implements IStorage {
   async deleteFollowup(id: number): Promise<boolean> {
     const result = await db.delete(followups).where(eq(followups.id, id)).returning();
     return result.length > 0;
+  }
+
+  // Invoices
+  async getInvoices(opts?: { contactId?: number; dateFrom?: string; dateTo?: string }): Promise<Invoice[]> {
+    const conditions = [];
+    if (opts?.contactId) conditions.push(eq(invoices.contactId, opts.contactId));
+    if (opts?.dateFrom) conditions.push(sql`${invoices.issueDate} >= ${opts.dateFrom}`);
+    if (opts?.dateTo) conditions.push(sql`${invoices.issueDate} <= ${opts.dateTo}`);
+    const where = conditions.length > 0 ? and(...conditions) : undefined;
+    return db.select().from(invoices).where(where).orderBy(desc(invoices.issueDate));
+  }
+  async getInvoice(id: number): Promise<Invoice | undefined> {
+    const [inv] = await db.select().from(invoices).where(eq(invoices.id, id));
+    return inv;
+  }
+  async createInvoice(data: InsertInvoice): Promise<Invoice> {
+    const [inv] = await db.insert(invoices).values(data).returning();
+    return inv;
+  }
+  async updateInvoice(id: number, data: Partial<InsertInvoice>): Promise<Invoice | undefined> {
+    const [inv] = await db.update(invoices).set(data).where(eq(invoices.id, id)).returning();
+    return inv;
+  }
+  async deleteInvoice(id: number): Promise<boolean> {
+    const result = await db.delete(invoices).where(eq(invoices.id, id)).returning();
+    return result.length > 0;
+  }
+  async generateInvoiceNumber(): Promise<string> {
+    const year = new Date().getFullYear();
+    const prefix = `INV-${year}-`;
+    const result = await db.execute(sql`
+      SELECT invoice_number FROM invoices
+      WHERE invoice_number LIKE ${prefix + '%'}
+      ORDER BY invoice_number DESC LIMIT 1
+    `);
+    let next = 1;
+    if (result.rows.length > 0) {
+      const last = (result.rows[0] as any).invoice_number as string;
+      const num = parseInt(last.split("-").pop() || "0", 10);
+      next = num + 1;
+    }
+    return `${prefix}${String(next).padStart(4, "0")}`;
+  }
+
+  // Sales history — reads from invoices (the source of truth for completed sales)
+  async getSalesHistory(opts?: { dateFrom?: string; dateTo?: string; contactId?: number; advisorName?: string; search?: string }): Promise<Invoice[]> {
+    const conditions: ReturnType<typeof eq>[] = [];
+    if (opts?.dateFrom) conditions.push(sql`${invoices.issueDate} >= ${opts.dateFrom}`);
+    if (opts?.dateTo) conditions.push(sql`${invoices.issueDate} <= ${opts.dateTo}`);
+    if (opts?.contactId) conditions.push(eq(invoices.contactId, opts.contactId));
+    if (opts?.advisorName) conditions.push(eq(invoices.advisorName, opts.advisorName));
+    if (opts?.search) {
+      const term = `%${opts.search}%`;
+      conditions.push(or(
+        ilike(invoices.invoiceNumber, term),
+        ilike(invoices.contactName, term),
+        ilike(invoices.artworkTitle, term),
+        ilike(invoices.artistName, term),
+      )!);
+    }
+    const where = conditions.length > 0 ? and(...conditions) : undefined;
+    return db.select().from(invoices).where(where).orderBy(desc(invoices.issueDate));
+  }
+
+  async getSalesStats(): Promise<Record<string, any>> {
+    const [totalResult, countResult, topBuyerResult, byMonthResult] = await Promise.all([
+      db.execute(sql`
+        SELECT COALESCE(currency, 'USD') AS currency, COALESCE(SUM(total_amount::bigint), 0) AS total, COUNT(*)::int AS count
+        FROM invoices GROUP BY COALESCE(currency, 'USD')
+      `),
+      db.execute(sql`SELECT COUNT(*)::int AS count FROM invoices`),
+      db.execute(sql`
+        SELECT contact_name AS "contactName", SUM(total_amount::bigint) AS total, COUNT(*)::int AS deals
+        FROM invoices WHERE contact_name IS NOT NULL
+        GROUP BY contact_name ORDER BY total DESC NULLS LAST LIMIT 1
+      `),
+      db.execute(sql`
+        SELECT to_char(issue_date::date, 'YYYY-MM') AS month, COALESCE(SUM(total_amount::bigint), 0) AS total, COUNT(*)::int AS count
+        FROM invoices WHERE issue_date IS NOT NULL
+        GROUP BY to_char(issue_date::date, 'YYYY-MM')
+        ORDER BY month DESC LIMIT 12
+      `),
+    ]);
+
+    const totalByCurrency = (totalResult.rows as any[]).map(r => ({ currency: r.currency, total: Number(r.total), count: r.count }));
+    const totalCount = (countResult.rows[0] as any)?.count || 0;
+    const allTotals = totalByCurrency.reduce((s, r) => s + r.total, 0);
+
+    return {
+      totalRevenueByCurrency: totalByCurrency,
+      totalSales: totalCount,
+      avgDealSize: totalCount > 0 ? Math.round(allTotals / totalCount) : 0,
+      topBuyer: topBuyerResult.rows[0] ? { ...(topBuyerResult.rows[0] as any), total: Number((topBuyerResult.rows[0] as any).total) } : null,
+      revenueByMonth: (byMonthResult.rows as any[]).map(r => ({ ...r, total: Number(r.total) })),
+    };
+  }
+
+  // Recalc contact LTV from invoices (source of truth for completed sales)
+  async recalcContactLTV(contactId: number): Promise<void> {
+    await db.execute(sql`
+      UPDATE contacts SET
+        total_purchases = (SELECT COUNT(*)::int FROM invoices WHERE contact_id = ${contactId}),
+        total_spent = (SELECT COALESCE(SUM(total_amount), 0)::int FROM invoices WHERE contact_id = ${contactId}),
+        lifetime_value = (SELECT COALESCE(SUM(total_amount), 0)::int FROM invoices WHERE contact_id = ${contactId})
+      WHERE id = ${contactId}
+    `);
   }
 
   // Stats — all computed via SQL, no data transfer
@@ -352,11 +496,11 @@ export class DatabaseStorage implements IStorage {
       db.select({ total: sum(deals.value) }).from(deals).where(
         and(ne(deals.stage, "closed_won"), ne(deals.stage, "closed_lost"))
       ),
-      // Fix: real closedWonValue
-      db.select({ total: sum(deals.value) }).from(deals).where(eq(deals.stage, "closed_won")),
+      // Total revenue from invoices (source of truth)
+      db.execute(sql`SELECT COALESCE(SUM(total_amount::bigint), 0) AS total FROM invoices`),
       // Pipeline value by currency
       db.execute(sql`
-        SELECT COALESCE(currency, 'USD') AS currency, COALESCE(SUM(value), 0)::int AS total, COUNT(*)::int AS count
+        SELECT COALESCE(currency, 'USD') AS currency, COALESCE(SUM(value::bigint), 0) AS total, COUNT(*)::int AS count
         FROM deals WHERE stage NOT IN ('closed_won', 'closed_lost')
         GROUP BY COALESCE(currency, 'USD')
       `),
@@ -370,14 +514,14 @@ export class DatabaseStorage implements IStorage {
         ELSE ROUND(100.0 * COUNT(*) FILTER (WHERE first_response_time <= 60) / COUNT(*))::int END AS pct
         FROM deals WHERE first_response_time IS NOT NULL
       `),
-      // Phase 3: revenue closed this month
-      db.execute(sql`SELECT COALESCE(SUM(value), 0)::int AS total FROM deals WHERE stage = 'closed_won' AND close_date >= to_char(date_trunc('month', CURRENT_DATE), 'YYYY-MM-DD')`),
+      // Phase 3: revenue closed this month (from invoices)
+      db.execute(sql`SELECT COALESCE(SUM(total_amount::bigint), 0) AS total FROM invoices WHERE issue_date >= to_char(date_trunc('month', CURRENT_DATE), 'YYYY-MM-DD')`),
       // Phase 3/4: overdue followups
       db.execute(sql`SELECT COUNT(*)::int AS count FROM followups WHERE status = 'pending' AND due_date < CURRENT_DATE::text`),
       // Phase 3: leads by source
       db.execute(sql`SELECT source_channel AS source, COUNT(*)::int AS count FROM deals WHERE source_channel IS NOT NULL GROUP BY source_channel`),
       // Phase 3: pipeline by stage with value
-      db.execute(sql`SELECT stage, COUNT(*)::int AS count, COALESCE(SUM(value), 0)::int AS value FROM deals GROUP BY stage`),
+      db.execute(sql`SELECT stage, COUNT(*)::int AS count, COALESCE(SUM(value::bigint), 0) AS value FROM deals GROUP BY stage`),
       // Phase 3: deals at risk (active, >5 days without activity)
       db.execute(sql`
         SELECT id, title, contact_name AS "contactName", value, stage, last_activity_at AS "lastActivityAt"
@@ -402,7 +546,7 @@ export class DatabaseStorage implements IStorage {
     (leadsBySourceResult.rows as any[]).forEach(r => { leadsBySource[r.source] = r.count; });
 
     const pipelineByStage: { stage: string; count: number; value: number }[] =
-      (pipelineByStageResult.rows as any[]).map(r => ({ stage: r.stage, count: r.count, value: r.value }));
+      (pipelineByStageResult.rows as any[]).map(r => ({ stage: r.stage, count: r.count, value: Number(r.value) }));
 
     return {
       totalContacts,
@@ -411,7 +555,7 @@ export class DatabaseStorage implements IStorage {
       activeExhibitions: activeExhibitionsResult[0]?.count || 0,
       totalInventoryValue: Number(inventoryValueResult[0]?.total || 0),
       activeDealsValue: Number(activeDealsResult[0]?.total || 0),
-      closedWonValue: Number(closedWonResult[0]?.total || 0),
+      closedWonValue: Number((closedWonResult.rows[0] as any)?.total || 0),
       statusCounts,
       stageCounts,
       typeCounts,
@@ -419,13 +563,56 @@ export class DatabaseStorage implements IStorage {
       newLeadsThisWeek: (newLeadsResult.rows[0] as any)?.count || 0,
       avgResponseTime: (avgResponseResult.rows[0] as any)?.avg || 0,
       repliedUnder1h: (repliedUnder1hResult.rows[0] as any)?.pct || 0,
-      revenueClosedThisMonth: (revenueThisMonthResult.rows[0] as any)?.total || 0,
+      revenueClosedThisMonth: Number((revenueThisMonthResult.rows[0] as any)?.total || 0),
       overdueFollowups: (overdueFollowupsResult.rows[0] as any)?.count || 0,
       leadsBySource,
       pipelineByStage,
-      pipelineByCurrency: (pipelineByCurrencyResult.rows as any[]).map(r => ({ currency: r.currency, total: r.total, count: r.count })),
+      pipelineByCurrency: (pipelineByCurrencyResult.rows as any[]).map(r => ({ currency: r.currency, total: Number(r.total), count: r.count })),
       dealsAtRisk: dealsAtRiskResult.rows as any[],
     };
+  }
+
+  // Messages
+  async getMessages(opts?: { channel?: string; status?: string; contactId?: number }): Promise<Message[]> {
+    const conditions = [];
+    if (opts?.channel && opts.channel !== "all") conditions.push(eq(messages.channel, opts.channel));
+    if (opts?.status && opts.status !== "all") conditions.push(eq(messages.status, opts.status));
+    if (opts?.contactId) conditions.push(eq(messages.contactId, opts.contactId));
+
+    const rows = await db
+      .select()
+      .from(messages)
+      .where(conditions.length ? and(...conditions) : undefined)
+      .orderBy(desc(messages.createdAt))
+      .limit(200);
+    return rows;
+  }
+
+  async getMessage(id: number): Promise<Message | undefined> {
+    const [row] = await db.select().from(messages).where(eq(messages.id, id)).limit(1);
+    return row;
+  }
+
+  async createMessage(data: InsertMessage): Promise<Message> {
+    const [row] = await db.insert(messages).values(data).returning();
+    return row;
+  }
+
+  async updateMessage(id: number, data: Partial<InsertMessage>): Promise<Message | undefined> {
+    const [row] = await db.update(messages).set(data).where(eq(messages.id, id)).returning();
+    return row;
+  }
+
+  async findContactByEmailOrPhone(email?: string, phone?: string): Promise<Contact | undefined> {
+    if (email) {
+      const [row] = await db.select().from(contacts).where(eq(contacts.email, email)).limit(1);
+      if (row) return row;
+    }
+    if (phone) {
+      const [row] = await db.select().from(contacts).where(eq(contacts.phone, phone)).limit(1);
+      if (row) return row;
+    }
+    return undefined;
   }
 }
 

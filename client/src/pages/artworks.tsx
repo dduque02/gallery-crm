@@ -56,6 +56,12 @@ function DetailRow({ label, value, multiline }: { label: string; value: string; 
 }
 
 function DetailPanel({ artwork, onClose, onEdit, onDelete }: { artwork: Artwork; onClose: () => void; onEdit: () => void; onDelete: () => void }) {
+  const allImages = [
+    ...(artwork.imageUrl ? [artwork.imageUrl] : []),
+    ...(artwork.secondaryImages || []),
+  ];
+  const [activeImageIdx, setActiveImageIdx] = useState(0);
+
   return (
     <div className="flex flex-col h-full">
       <div className="flex items-center justify-between px-4 py-2 border-b shrink-0">
@@ -75,12 +81,22 @@ function DetailPanel({ artwork, onClose, onEdit, onDelete }: { artwork: Artwork;
         </div>
       </div>
       <div className="aspect-square bg-muted flex items-center justify-center shrink-0 overflow-hidden">
-        {artwork.imageUrl ? (
-          <img src={artwork.imageUrl} alt={artwork.title} className="object-contain w-full h-full" />
+        {allImages.length > 0 ? (
+          <img src={allImages[activeImageIdx] || allImages[0]} alt={artwork.title} className="object-contain w-full h-full" />
         ) : (
           <div className="flex flex-col items-center gap-2 text-muted-foreground/30"><ImageIcon className="h-12 w-12" /><span className="text-[10px] uppercase tracking-widest">No image</span></div>
         )}
       </div>
+      {allImages.length > 1 && (
+        <div className="flex gap-1 px-4 py-2 border-b shrink-0 overflow-x-auto">
+          {allImages.map((url, i) => (
+            <button key={i} type="button" onClick={() => setActiveImageIdx(i)}
+              className={`h-10 w-10 shrink-0 rounded overflow-hidden border-2 transition-colors ${i === activeImageIdx ? "border-primary" : "border-transparent hover:border-muted-foreground/30"}`}>
+              <img src={url} alt="" className="h-full w-full object-cover" />
+            </button>
+          ))}
+        </div>
+      )}
       <div className="px-4 py-3 border-b space-y-1 shrink-0">
         <p className="text-xs font-bold uppercase tracking-wide">{artwork.artistName}</p>
         <p className="text-sm"><span className="italic">{artwork.title}</span>{artwork.year && <span className="text-muted-foreground">, {artwork.year}</span>}</p>

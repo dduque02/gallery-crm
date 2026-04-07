@@ -2,6 +2,20 @@ import { pgTable, text, serial, integer, boolean, timestamp } from "drizzle-orm/
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
+// Users: authentication & roles
+export const users = pgTable("users", {
+  id: serial("id").primaryKey(),
+  email: text("email").notNull().unique(),
+  passwordHash: text("password_hash").notNull(),
+  name: text("name").notNull(),
+  role: text("role").notNull().default("advisor"), // "director" | "advisor"
+  createdAt: text("created_at").notNull(),
+});
+
+export const insertUserSchema = createInsertSchema(users).omit({ id: true });
+export type InsertUser = z.infer<typeof insertUserSchema>;
+export type User = typeof users.$inferSelect;
+
 // Contacts: collectors, artists, institutions, galleries
 export const contacts = pgTable("contacts", {
   id: serial("id").primaryKey(),
@@ -66,17 +80,41 @@ export const artworks = pgTable("artworks", {
   conditionNotes: text("condition_notes"),
   // Media
   imageUrl: text("image_url"),
+  thumbUrl: text("thumb_url"),
+  mediumUrl: text("medium_url"),
+  secondaryImages: text("secondary_images").array(),
   // Internal
   importance: integer("importance").default(0),  // Artlogic: star rating 0-5
   internalNotes: text("internal_notes"),
   tags: text("tags").array(),
   // Relationships
-  contactId: integer("contact_id"),            // artist contact
-  consignorId: integer("consignor_id"),
+  contactId: integer("contact_id").references(() => contacts.id, { onDelete: "set null" }),
+  consignorId: integer("consignor_id").references(() => contacts.id, { onDelete: "set null" }),
   // Series / Category
   series: text("series"),
   genre: text("genre"),
   category: text("category"),                  // painting, sculpture, photography, etc.
+  // Status & Availability extras
+  isEquipment: boolean("is_equipment").default(false),
+  market: text("market"),                       // "n_a", "primary", "secondary"
+  associatedCosts: integer("associated_costs"), // for profit calculation
+  // Consignment details
+  consignorIsArtist: boolean("consignor_is_artist").default(false),
+  consignmentFromDate: text("consignment_from_date"),
+  consignmentReturnDue: text("consignment_return_due"),
+  consignmentReturned: boolean("consignment_returned").default(false),
+  consignmentReminderDate: text("consignment_reminder_date"),
+  consignmentTerms: text("consignment_terms"),           // "percentage" | "net_value"
+  consignmentPercentage: integer("consignment_percentage"),
+  consignmentNetValue: integer("consignment_net_value"),
+  consignmentNotes: text("consignment_notes"),
+  consignmentHistory: text("consignment_history"),
+  contractSigned: boolean("contract_signed").default(false),
+  nonStandardContract: boolean("non_standard_contract").default(false),
+  consignmentInvoiceStatus: text("consignment_invoice_status"), // "not_invoiced", "invoiced", "paid"
+  // Documentation
+  additionalCertificates: text("additional_certificates"),
+  additionalDocuments: text("additional_documents"),
 });
 
 export const insertArtworkSchema = createInsertSchema(artworks).omit({ id: true });
@@ -98,8 +136,8 @@ export type ArtistSettings = typeof artistSettings.$inferSelect;
 export const deals = pgTable("deals", {
   id: serial("id").primaryKey(),
   title: text("title").notNull(),
-  contactId: integer("contact_id"),
-  artworkId: integer("artwork_id"),
+  contactId: integer("contact_id").references(() => contacts.id, { onDelete: "cascade" }),
+  artworkId: integer("artwork_id").references(() => artworks.id, { onDelete: "set null" }),
   value: integer("value"),
   stage: text("stage").notNull(),
   priority: text("priority").default("medium"),
@@ -145,8 +183,8 @@ export const activities = pgTable("activities", {
   id: serial("id").primaryKey(),
   type: text("type").notNull(),
   description: text("description").notNull(),
-  contactId: integer("contact_id"),
-  dealId: integer("deal_id"),
+  contactId: integer("contact_id").references(() => contacts.id, { onDelete: "cascade" }),
+  dealId: integer("deal_id").references(() => deals.id, { onDelete: "cascade" }),
   date: text("date").notNull(),
   contactName: text("contact_name"),
 });
@@ -158,8 +196,8 @@ export type Activity = typeof activities.$inferSelect;
 // Follow-ups (Phase 4)
 export const followups = pgTable("followups", {
   id: serial("id").primaryKey(),
-  dealId: integer("deal_id"),
-  contactId: integer("contact_id"),
+  dealId: integer("deal_id").references(() => deals.id, { onDelete: "cascade" }),
+  contactId: integer("contact_id").references(() => contacts.id, { onDelete: "cascade" }),
   type: text("type").notNull(),
   description: text("description").notNull(),
   dueDate: text("due_date").notNull(),
@@ -176,3 +214,60 @@ export const followups = pgTable("followups", {
 export const insertFollowupSchema = createInsertSchema(followups).omit({ id: true });
 export type InsertFollowup = z.infer<typeof insertFollowupSchema>;
 export type Followup = typeof followups.$inferSelect;
+
+// Invoices — auto-created when a deal is closed_won
+export const invoices = pgTable("invoices", {
+  id: serial("id").primaryKey(),
+  invoiceNumber: text("invoice_number").notNull().unique(),
+  dealId: integer("deal_id").references(() => deals.id, { onDelete: "set null" }),
+  contactId: integer("contact_id").references(() => contacts.id, { onDelete: "set null" }),
+  // Snapshot fields (survive deal/contact edits)
+  contactName: text("contact_name"),
+  contactEmail: text("contact_email"),
+  artworkTitle: text("artwork_title"),
+  artworkDetails: text("artwork_details"), // "medium, dimensions, year"
+  artistName: text("artist_name"),
+  // Financial
+  amount: integer("amount").notNull(),
+  currency: text("currency").default("USD"),
+  tax: integer("tax").default(0),
+  totalAmount: integer("total_amount").notNull(),
+  // Status
+  status: text("status").notNull().default("draft"), // draft, sent, paid
+  // Dates
+  issueDate: text("issue_date").notNull(),
+  dueDate: text("due_date"),
+  paidDate: text("paid_date"),
+  // Notes
+  notes: text("notes"),
+  advisorName: text("advisor_name"),
+  createdAt: text("created_at").notNull(),
+});
+
+export const insertInvoiceSchema = createInsertSchema(invoices).omit({ id: true });
+export type InsertInvoice = z.infer<typeof insertInvoiceSchema>;
+export type Invoice = typeof invoices.$inferSelect;
+
+// Messages: multi-channel conversation log
+export const messages = pgTable("messages", {
+  id: serial("id").primaryKey(),
+  externalId: text("external_id"),                    // ID in the source channel
+  channel: text("channel").notNull(),                  // email, whatsapp, instagram, web_form, artsy
+  direction: text("direction").notNull(),              // inbound, outbound
+  contactId: integer("contact_id").references(() => contacts.id, { onDelete: "set null" }),
+  dealId: integer("deal_id").references(() => deals.id, { onDelete: "set null" }),
+  senderName: text("sender_name"),
+  senderEmail: text("sender_email"),
+  senderPhone: text("sender_phone"),
+  subject: text("subject"),
+  body: text("body").notNull(),
+  metadata: text("metadata"),                          // JSON: channel-specific data
+  aiClassification: text("ai_classification"),         // JSON: Claude's analysis
+  status: text("status").default("pending"),            // pending, processed, draft, sent, failed
+  createdAt: text("created_at").notNull(),
+  processedAt: text("processed_at"),
+});
+
+export const insertMessageSchema = createInsertSchema(messages).omit({ id: true });
+export type InsertMessage = z.infer<typeof insertMessageSchema>;
+export type Message = typeof messages.$inferSelect;

@@ -3,6 +3,9 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
+import { setupSecurity } from "./middleware";
+import { setupAuth, requireAuth } from "./auth";
+import "./automations";
 
 const app = express();
 const httpServer = createServer(app);
@@ -22,6 +25,10 @@ app.use(
 );
 
 app.use(express.urlencoded({ extended: false }));
+
+setupSecurity(app);
+setupAuth(app);
+app.use(requireAuth);
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
@@ -65,7 +72,10 @@ app.use((req, res, next) => {
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
-    const message = err.message || "Internal Server Error";
+    const message =
+      process.env.NODE_ENV === "production"
+        ? "Internal Server Error"
+        : err.message || "Internal Server Error";
 
     console.error("Internal Server Error:", err);
 
@@ -94,7 +104,7 @@ app.use((req, res, next) => {
   httpServer.listen(
     {
       port,
-      host: "127.0.0.1",
+      host: "0.0.0.0",
     },
     () => {
       log(`serving on port ${port}`);

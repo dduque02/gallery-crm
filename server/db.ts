@@ -8,8 +8,13 @@ if (!process.env.DATABASE_URL) {
   );
 }
 
-const pool = new pg.Pool({
+export const pool = new pg.Pool({
   connectionString: process.env.DATABASE_URL,
 });
 
-export const db = drizzle(pool, { schema });
+export const db = drizzle(pool, {
+  schema,
+  // Supabase transaction pooler (port 6543) doesn't support prepared statements
+  logger: false,
+  ...(process.env.NODE_ENV === "production" && { prepare: false }),
+});

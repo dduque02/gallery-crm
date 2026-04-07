@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { useLocation } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { Deal, InsertDeal, Contact, Artwork } from "@shared/schema";
 import { Card, CardContent } from "@/components/ui/card";
@@ -12,55 +13,19 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
+import { ToastAction } from "@/components/ui/toast";
 import {
-  Plus, DollarSign, ArrowRight, Pencil, Trash2, CalendarPlus,
+  Plus, DollarSign, ArrowRight, Pencil, Trash2, CalendarPlus, Filter,
 } from "lucide-react";
 
-const stages = [
-  { key: "new_inquiry", label: "New Inquiry", color: "border-t-sky-500" },
-  { key: "qualified", label: "Qualified", color: "border-t-blue-500" },
-  { key: "artwork_presented", label: "Artwork Presented", color: "border-t-indigo-500" },
-  { key: "collector_engaged", label: "Collector Engaged", color: "border-t-amber-500" },
-  { key: "negotiation", label: "Negotiation", color: "border-t-purple-500" },
-  { key: "closed_won", label: "Won", color: "border-t-emerald-500" },
-  { key: "closed_lost", label: "Lost", color: "border-t-red-500" },
-];
-
-const sourceChannels = ["Artsy", "Website", "WhatsApp", "Instagram", "Email", "Referral"];
-
-const lostReasons = [
-  "Price too high",
-  "Lost interest",
-  "Bought elsewhere",
-  "Budget constraints",
-  "No response",
-  "Other",
-];
-
-const advisors = [
-  "Miguel Duque", "Santiago Duque", "Federico Duque", "Sebastián Duque",
-  "David Duque", "Germán Duque", "Sergio Arango", "Nora Acosta",
-];
-
-const priorityColors: Record<string, string> = {
-  high: "bg-red-500",
-  medium: "bg-amber-500",
-  low: "bg-emerald-500",
-};
-
-const sourceColors: Record<string, string> = {
-  Artsy: "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300",
-  Website: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300",
-  WhatsApp: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300",
-  Instagram: "bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-300",
-  Email: "bg-gray-100 text-gray-700 dark:bg-gray-900/30 dark:text-gray-300",
-  Referral: "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300",
-};
-
-function formatCurrency(val: number, currency: string = "USD") {
-  return new Intl.NumberFormat("en-US", { style: "currency", currency, maximumFractionDigits: 0 }).format(val);
-}
+import {
+  stages, sourceChannels, lostReasons, advisors,
+  priorityColors, sourceColors, formatCurrency,
+} from "@/lib/pipeline-constants";
+import { DealDetailSheet } from "@/components/deal-detail-sheet";
 
 // Follow-up scheduling dialog
 function ScheduleFollowupDialog({ deal, open, onOpenChange }: { deal: Deal; open: boolean; onOpenChange: (open: boolean) => void }) {
@@ -320,12 +285,12 @@ function DealForm({ onSuccess, contacts, artworks, initial }: { onSuccess: () =>
   );
 }
 
-function DealCard({ deal, onMove, onEdit, onDelete, onScheduleFollowup }: { deal: Deal; onMove: (id: number, stage: string) => void; onEdit: () => void; onDelete: () => void; onScheduleFollowup: () => void }) {
+function DealCard({ deal, artworkImageUrl, onClick, onMove, onEdit, onDelete, onScheduleFollowup }: { deal: Deal; artworkImageUrl?: string | null; onClick: () => void; onMove: (id: number, stage: string) => void; onEdit: () => void; onDelete: () => void; onScheduleFollowup: () => void }) {
   const stageIdx = stages.findIndex(s => s.key === deal.stage);
   const nextStage = stageIdx < stages.length - 2 ? stages[stageIdx + 1] : null;
 
   return (
-    <Card className="hover-elevate cursor-pointer group" data-testid={`card-deal-${deal.id}`}>
+    <Card className="hover-elevate cursor-pointer group" data-testid={`card-deal-${deal.id}`} onClick={onClick}>
       <CardContent className="p-3 space-y-2">
         <div className="flex items-start justify-between gap-2">
           <p className="text-sm font-medium leading-tight">{deal.title}</p>
@@ -333,6 +298,11 @@ function DealCard({ deal, onMove, onEdit, onDelete, onScheduleFollowup }: { deal
             <div className={`h-2 w-2 rounded-full ${priorityColors[deal.priority || "medium"]}`} />
           </div>
         </div>
+        {artworkImageUrl && (
+          <div className="w-full h-20 rounded-sm overflow-hidden bg-muted">
+            <img src={artworkImageUrl} alt="" className="w-full h-full object-cover" loading="lazy" />
+          </div>
+        )}
         {deal.contactName && <p className="text-xs text-muted-foreground">{deal.contactName}</p>}
         {deal.value ? (
           <div className="flex items-center gap-1">
@@ -421,23 +391,67 @@ export default function Pipeline() {
   const { data: artworksResult } = useQuery<{ data: Artwork[] }>({ queryKey: ["/api/artworks"] });
   const contacts = contactsResult?.data || [];
   const artworks = artworksResult?.data || [];
+  const artworkMap = useMemo(() => {
+    const map = new Map<number, Artwork>();
+    artworks.forEach(a => map.set(a.id, a));
+    return map;
+  }, [artworks]);
+  const contactMap = useMemo(() => {
+    const map = new Map<number, Contact>();
+    contacts.forEach(c => map.set(c.id, c));
+    return map;
+  }, [contacts]);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editDeal, setEditDeal] = useState<Deal | null>(null);
   const [followupDeal, setFollowupDeal] = useState<Deal | null>(null);
   const [lostDialog, setLostDialog] = useState<{ dealId: number } | null>(null);
-  const [period, setPeriod] = useState("all");
+  const [selectedDealId, setSelectedDealId] = useState<number | null>(null);
+  const [period, setPeriod] = useState("month");
+  const [selectedAdvisors, setSelectedAdvisors] = useState<string[]>([]);
   const { toast } = useToast();
+  const [, navigate] = useLocation();
+
+  const selectedDeal = selectedDealId ? deals?.find(d => d.id === selectedDealId) || null : null;
+  const selectedContact = selectedDeal?.contactId ? contactMap.get(selectedDeal.contactId) : undefined;
+  const selectedArtwork = selectedDeal?.artworkId ? artworkMap.get(selectedDeal.artworkId) : undefined;
 
   const minDate = getDateRange(period);
-  const filteredDeals = deals ? (minDate ? deals.filter(d => (d.createdDate || "") >= minDate) : deals) : [];
+  const filteredDeals = deals
+    ? deals.filter(d => {
+        if (minDate) {
+          // For closed deals, filter by closeDate; for active deals, by createdDate
+          const relevantDate = d.stage.startsWith("closed") ? (d.closeDate || d.createdDate || "") : (d.createdDate || "");
+          if (relevantDate < minDate) return false;
+        }
+        if (selectedAdvisors.length > 0 && !selectedAdvisors.includes(d.advisorName || "")) return false;
+        return true;
+      })
+    : [];
 
   const moveDeal = useMutation({
-    mutationFn: ({ id, stage, lostReason }: { id: number; stage: string; lostReason?: string }) =>
-      apiRequest("PATCH", `/api/deals/${id}`, { stage, ...(lostReason ? { lostReason } : {}) }),
-    onSuccess: () => {
+    mutationFn: async ({ id, stage, lostReason }: { id: number; stage: string; lostReason?: string }) => {
+      const res = await apiRequest("PATCH", `/api/deals/${id}`, { stage, ...(lostReason ? { lostReason } : {}) });
+      return { stage, data: await res.json() };
+    },
+    onSuccess: ({ stage, data }) => {
       queryClient.invalidateQueries({ queryKey: ["/api/deals"] });
       queryClient.invalidateQueries({ queryKey: ["/api/stats"] });
-      toast({ title: "Deal updated" });
+      queryClient.invalidateQueries({ queryKey: ["/api/sales-history"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/sales-stats"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
+      if (stage === "closed_won" && data.createdInvoice) {
+        toast({
+          title: "Deal won! Invoice created",
+          description: `Invoice ${data.createdInvoice.invoiceNumber} is ready.`,
+          action: (
+            <ToastAction altText="View Invoice" onClick={() => navigate("/sales-history")}>
+              View Invoice
+            </ToastAction>
+          ),
+        });
+      } else {
+        toast({ title: "Deal updated" });
+      }
     },
   });
 
@@ -469,6 +483,42 @@ export default function Pipeline() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="outline" size="sm" className={`h-8 text-xs gap-1.5 ${selectedAdvisors.length > 0 ? "border-primary" : ""}`}>
+                <Filter className="h-3.5 w-3.5" />
+                {selectedAdvisors.length === 0 ? "Advisors" : selectedAdvisors.length === 1 ? selectedAdvisors[0] : `${selectedAdvisors.length} advisors`}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-48 p-2" align="end">
+              <div className="space-y-1">
+                {advisors.map(a => (
+                  <label key={a} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-muted cursor-pointer text-sm">
+                    <Checkbox
+                      checked={selectedAdvisors.includes(a)}
+                      onCheckedChange={(checked) => {
+                        setSelectedAdvisors(prev =>
+                          checked ? [...prev, a] : prev.filter(x => x !== a)
+                        );
+                      }}
+                    />
+                    {a}
+                  </label>
+                ))}
+                {selectedAdvisors.length > 0 && (
+                  <>
+                    <div className="border-t my-1" />
+                    <button
+                      className="w-full text-xs text-muted-foreground hover:text-foreground py-1 text-center"
+                      onClick={() => setSelectedAdvisors([])}
+                    >
+                      Clear all
+                    </button>
+                  </>
+                )}
+              </div>
+            </PopoverContent>
+          </Popover>
           <Select value={period} onValueChange={setPeriod}>
             <SelectTrigger className="w-[130px] h-8 text-xs">
               <SelectValue />
@@ -516,6 +566,8 @@ export default function Pipeline() {
                     <DealCard
                       key={deal.id}
                       deal={deal}
+                      artworkImageUrl={deal.artworkId ? artworkMap.get(deal.artworkId)?.imageUrl : undefined}
+                      onClick={() => setSelectedDealId(deal.id)}
                       onMove={handleMove}
                       onEdit={() => setEditDeal(deal)}
                       onDelete={() => deleteDeal.mutate(deal.id)}
@@ -562,6 +614,18 @@ export default function Pipeline() {
           onOpenChange={(open) => { if (!open) setFollowupDeal(null); }}
         />
       )}
+
+      {/* Deal Detail Sheet */}
+      <DealDetailSheet
+        deal={selectedDeal}
+        contact={selectedContact}
+        artwork={selectedArtwork}
+        onClose={() => setSelectedDealId(null)}
+        onEdit={(deal) => { setSelectedDealId(null); setEditDeal(deal); }}
+        onMove={(id, stage) => handleMove(id, stage)}
+        onDelete={(id) => { setSelectedDealId(null); deleteDeal.mutate(id); }}
+        onScheduleFollowup={(deal) => setFollowupDeal(deal)}
+      />
     </div>
   );
 }

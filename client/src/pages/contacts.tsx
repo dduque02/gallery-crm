@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import type { Contact, InsertContact } from "@shared/schema";
+import type { Contact, InsertContact, Deal } from "@shared/schema";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -18,8 +18,9 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import {
   Plus, Search, Mail, Phone, MapPin, Building, DollarSign, Calendar, Pencil, Trash2,
-  ChevronLeft, ChevronRight, Heart, Star,
+  ChevronLeft, ChevronRight, Heart, Star, ArrowRight,
 } from "lucide-react";
+import { stages, stageBadgeColors, formatCurrency as fmtCurrency } from "@/lib/pipeline-constants";
 
 const typeColors: Record<string, string> = {
   collector: "bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-300",
@@ -38,6 +39,60 @@ const levelColors: Record<string, string> = {
 
 function formatCurrency(val: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(val);
+}
+
+function ContactDeals({ contactId }: { contactId: number }) {
+  const { data: contactDeals } = useQuery<Deal[]>({
+    queryKey: [`/api/contacts/${contactId}/deals`],
+    enabled: !!contactId,
+  });
+
+  if (!contactDeals || contactDeals.length === 0) return null;
+
+  const active = contactDeals.filter(d => !d.stage.startsWith("closed"));
+  const closed = contactDeals.filter(d => d.stage.startsWith("closed"));
+
+  return (
+    <div className="border-t pt-4">
+      <p className="text-xs font-medium text-muted-foreground mb-3 uppercase tracking-wider flex items-center gap-1.5">
+        <DollarSign className="h-3.5 w-3.5" /> Deals ({contactDeals.length})
+      </p>
+      <div className="space-y-2">
+        {active.map(deal => {
+          const stageInfo = stages.find(s => s.key === deal.stage);
+          return (
+            <div key={deal.id} className="flex items-center justify-between gap-2 p-2 rounded-md bg-muted/50">
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium truncate">{deal.title}</p>
+                {deal.artworkTitle && <p className="text-[11px] text-muted-foreground italic truncate">"{deal.artworkTitle}"</p>}
+              </div>
+              <div className="flex items-center gap-1.5 shrink-0">
+                {deal.value && <span className="text-xs font-semibold tabular-nums">{fmtCurrency(deal.value, deal.currency || "USD")}</span>}
+                <Badge className={`text-[9px] ${stageBadgeColors[deal.stage] || ""}`}>{stageInfo?.label || deal.stage}</Badge>
+              </div>
+            </div>
+          );
+        })}
+        {closed.length > 0 && (
+          <div className="pt-1">
+            <p className="text-[10px] text-muted-foreground mb-1.5">Closed ({closed.length})</p>
+            {closed.map(deal => {
+              const won = deal.stage === "closed_won";
+              return (
+                <div key={deal.id} className="flex items-center justify-between gap-2 py-1.5 px-2 text-muted-foreground">
+                  <p className="text-xs truncate">{deal.title}</p>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {deal.value && <span className="text-[11px] tabular-nums">{fmtCurrency(deal.value, deal.currency || "USD")}</span>}
+                    <Badge variant="outline" className={`text-[9px] ${won ? "text-emerald-600" : "text-red-500"}`}>{won ? "Won" : "Lost"}</Badge>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 function getInitials(name: string) {
@@ -241,6 +296,21 @@ export default function Contacts() {
   const [editContact, setEditContact] = useState<Contact | null>(null);
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
   const { toast } = useToast();
+
+  // Auto-open contact from URL param (e.g. navigating from deal detail)
+  useEffect(() => {
+    const hash = window.location.hash;
+    const match = hash.match(/contactId=(\d+)/);
+    if (match) {
+      const id = Number(match[1]);
+      // Clean up the URL
+      window.location.hash = hash.replace(/[?&]contactId=\d+/, "");
+      // Fetch and open the contact
+      fetch(`/api/contacts/${id}`).then(r => r.json()).then(c => {
+        if (c && c.id) setSelectedContact(c);
+      });
+    }
+  }, []);
 
   const queryKey = ["/api/contacts", `?page=${page}&pageSize=${pageSize}&search=${search}&type=${typeFilter}`];
   const { data: result, isLoading } = useQuery<PaginatedContacts>({
@@ -451,6 +521,9 @@ export default function Contacts() {
                     <Card><CardContent className="p-3 text-center"><p className="text-lg font-bold tabular-nums">{(selectedContact.totalSpent || 0) > 0 ? formatCurrency(selectedContact.totalSpent || 0) : "$0"}</p><p className="text-xs text-muted-foreground">Total Spent</p></CardContent></Card>
                   </div>
                 </div>
+
+                {/* Active Deals */}
+                <ContactDeals contactId={selectedContact.id} />
 
                 {/* Collector Intelligence */}
                 {(selectedContact.preferredChannel || selectedContact.budgetLow || selectedContact.preferredMedium || selectedContact.preferredScale || (selectedContact.artistsOfInterest && selectedContact.artistsOfInterest.length > 0) || selectedContact.leadSource) && (

@@ -8,6 +8,7 @@ import {
   Calendar,
   Activity,
   CalendarCheck,
+  Receipt,
 } from "lucide-react";
 import {
   Sidebar,
@@ -27,6 +28,7 @@ const navItems = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard },
   { title: "Pipeline", url: "/pipeline", icon: TrendingUp },
   { title: "Follow-ups", url: "/followups", icon: CalendarCheck },
+  { title: "Sales History", url: "/sales-history", icon: Receipt },
   { title: "Contacts", url: "/contacts", icon: Users },
   { title: "Inventory", url: "/artworks", icon: Palette },
   { title: "Exhibitions", url: "/exhibitions", icon: Calendar },
@@ -42,20 +44,11 @@ export function AppSidebar() {
     <Sidebar collapsible="icon">
       <SidebarHeader className="p-4">
         <Link href="/" className="flex items-center gap-2.5 group" data-testid="link-logo">
-          <svg
-            width="28"
-            height="28"
-            viewBox="0 0 28 28"
-            fill="none"
-            xmlns="http://www.w3.org/2000/svg"
-            aria-label="Gallery CRM"
-            className="shrink-0"
-          >
-            <rect x="2" y="2" width="24" height="24" rx="4" stroke="currentColor" strokeWidth="2" fill="none" />
-            <rect x="7" y="7" width="6" height="8" rx="1" fill="currentColor" opacity="0.7" />
-            <rect x="15" y="9" width="6" height="6" rx="1" fill="currentColor" opacity="0.4" />
-            <line x1="7" y1="20" x2="21" y2="20" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-          </svg>
+          <img
+            src="/logo-da.png"
+            alt="Duque Arango Galeria"
+            className="h-7 w-auto shrink-0 dark:invert"
+          />
           <span className="text-sm font-semibold tracking-tight group-data-[collapsible=icon]:hidden">
             Gallery CRM
           </span>

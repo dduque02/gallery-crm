@@ -5,8 +5,9 @@ import { rm, readFile } from "fs/promises";
 // server deps to bundle to reduce openat(2) syscalls
 // which helps cold start times
 const allowlist = [
-  "@google/generative-ai",
-  "axios",
+  "@anthropic-ai/sdk",
+  "bcryptjs",
+  "compression",
   "connect-pg-simple",
   "cors",
   "date-fns",
@@ -15,21 +16,15 @@ const allowlist = [
   "express",
   "express-rate-limit",
   "express-session",
-  "jsonwebtoken",
-  "memorystore",
+  "helmet",
   "multer",
   "nanoid",
-  "nodemailer",
-  "openai",
-  "passport",
-  "passport-local",
   "pg",
-  "stripe",
-  "uuid",
   "ws",
   "xlsx",
   "zod",
   "zod-validation-error",
+  // sharp is NOT bundled — it has native binaries and must stay external
 ];
 
 async function buildAll() {
