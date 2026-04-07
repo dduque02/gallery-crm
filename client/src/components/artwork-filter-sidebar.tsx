@@ -12,6 +12,7 @@ const ARTWORK_TYPES = [
 
 const STATUS_OPTIONS = [
   { value: "available", label: "Available" },
+  { value: "on_consignment", label: "On Consignment" },
   { value: "consigned_out", label: "Consigned Out" },
   { value: "sold", label: "Sold" },
   { value: "reserved", label: "Reserved" },

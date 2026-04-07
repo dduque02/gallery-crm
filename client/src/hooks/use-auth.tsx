@@ -28,6 +28,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return res.json();
     },
     staleTime: Infinity,
+    refetchInterval: false,
+    refetchOnWindowFocus: false,
     retry: false,
   });
 

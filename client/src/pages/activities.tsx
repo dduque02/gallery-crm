@@ -85,7 +85,8 @@ function ActivityForm({ onSuccess, contacts }: { onSuccess: () => void; contacts
 
 export default function Activities() {
   const { data: activities, isLoading } = useQuery<Activity[]>({ queryKey: ["/api/activities"] });
-  const { data: contacts } = useQuery<Contact[]>({ queryKey: ["/api/contacts"] });
+  const { data: contactsData } = useQuery<{ data: Contact[] } | Contact[]>({ queryKey: ["/api/contacts"] });
+  const contacts = Array.isArray(contactsData) ? contactsData : contactsData?.data || [];
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -109,7 +110,7 @@ export default function Activities() {
           </DialogTrigger>
           <DialogContent className="max-w-md">
             <DialogHeader><DialogTitle>Log Activity</DialogTitle></DialogHeader>
-            <ActivityForm onSuccess={() => setDialogOpen(false)} contacts={contacts || []} />
+            <ActivityForm onSuccess={() => setDialogOpen(false)} contacts={contacts} />
           </DialogContent>
         </Dialog>
       </div>

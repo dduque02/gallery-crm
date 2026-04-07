@@ -300,7 +300,7 @@ function DealCard({ deal, artworkImageUrl, onClick, onMove, onEdit, onDelete, on
         </div>
         {artworkImageUrl && (
           <div className="w-full h-20 rounded-sm overflow-hidden bg-muted">
-            <img src={artworkImageUrl} alt="" className="w-full h-full object-cover" loading="lazy" />
+            <img src={artworkImageUrl} alt={deal.artworkTitle || "Artwork"} className="w-full h-full object-contain" loading="lazy" />
           </div>
         )}
         {deal.contactName && <p className="text-xs text-muted-foreground">{deal.contactName}</p>}

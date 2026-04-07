@@ -383,7 +383,8 @@ export async function registerRoutes(server: Server, app: Express) {
     const dateFrom = (req.query.dateFrom as string) || undefined;
     const dateTo = (req.query.dateTo as string) || undefined;
     const items = await storage.getInvoices({ contactId, dateFrom, dateTo });
-    res.json(items);
+    // Cap response to 500 records for safety
+    res.json(items.slice(0, 500));
   });
   app.get("/api/invoices/:id", async (req, res) => {
     const invoice = await storage.getInvoice(Number(req.params.id));
@@ -443,7 +444,15 @@ export async function registerRoutes(server: Server, app: Express) {
   });
 
   // Webhooks — incoming messages from external channels (no auth required)
-  app.post("/api/webhooks/web-form", async (req, res) => {
+  const webhookLimiter = (await import("express-rate-limit")).default({
+    windowMs: 15 * 60 * 1000,
+    max: 20,
+    standardHeaders: "draft-7",
+    legacyHeaders: false,
+    keyGenerator: (req: any) => req.ip || req.socket.remoteAddress || "unknown",
+    message: { message: "Too many requests" },
+  });
+  app.post("/api/webhooks/web-form", webhookLimiter, async (req, res) => {
     const { name, email, phone, message, subject, artworkInterest } = req.body;
     if (!message && !artworkInterest) {
       return res.status(400).json({ message: "message or artworkInterest is required" });
