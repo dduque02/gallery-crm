@@ -8,6 +8,8 @@ import { setupAuth, requireAuth } from "./auth";
 import "./automations";
 
 const app = express();
+// Trust Render's reverse proxy so secure cookies and rate-limit work correctly
+app.set("trust proxy", 1);
 const httpServer = createServer(app);
 
 declare module "http" {
