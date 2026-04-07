@@ -18,7 +18,13 @@ export function setupSecurity(app: Express) {
   app.use(compression());
 
   // CORS — locked to CORS_ORIGIN in production, open in dev
-  const origin = process.env.CORS_ORIGIN || true;
+  // Support multiple origins separated by commas (e.g., "https://crm.example.com,https://app.onrender.com")
+  const corsOriginEnv = process.env.CORS_ORIGIN;
+  const origin = corsOriginEnv
+    ? corsOriginEnv.includes(",")
+      ? corsOriginEnv.split(",").map((o) => o.trim())
+      : corsOriginEnv
+    : true;
   app.use(cors({ origin, credentials: true }));
 
   // Rate limiting — general API routes
@@ -46,7 +52,26 @@ export function setupSecurity(app: Express) {
   );
 
   // Health check endpoint (no auth required, used by Render)
-  app.get("/api/health", (_req: Request, res: Response) => {
-    res.json({ status: "ok", timestamp: new Date().toISOString() });
+  app.get("/api/health", async (_req: Request, res: Response) => {
+    // Basic health — always respond quickly
+    const health: Record<string, unknown> = {
+      status: "ok",
+      timestamp: new Date().toISOString(),
+    };
+
+    // If ?db=1 is passed, also test database connectivity (for diagnostics)
+    if (_req.query.db === "1") {
+      try {
+        const { pool } = await import("./db");
+        const result = await pool.query("SELECT 1 AS ping");
+        health.db = "ok";
+        health.dbPing = result.rows[0]?.ping;
+      } catch (err: any) {
+        health.db = "error";
+        health.dbError = err.message;
+      }
+    }
+
+    res.json(health);
   });
 }

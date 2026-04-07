@@ -55,31 +55,44 @@ export function setupAuth(app: Express) {
 
   // Login
   app.post("/api/login", async (req: Request, res: Response) => {
-    const { email, password } = req.body;
-    if (!email || !password) {
-      return res.status(400).json({ message: "Email and password are required." });
+    try {
+      const { email, password } = req.body;
+      if (!email || !password) {
+        return res.status(400).json({ message: "Email and password are required." });
+      }
+
+      const [user] = await db.select().from(users).where(eq(users.email, email)).limit(1);
+      if (!user) {
+        return res.status(401).json({ message: "Invalid email or password." });
+      }
+
+      const valid = await bcrypt.compare(password, user.passwordHash);
+      if (!valid) {
+        return res.status(401).json({ message: "Invalid email or password." });
+      }
+
+      // Explicitly save session to catch store errors
+      req.session.userId = user.id;
+      req.session.userRole = user.role;
+      req.session.userName = user.name;
+
+      await new Promise<void>((resolve, reject) => {
+        req.session.save((err) => (err ? reject(err) : resolve()));
+      });
+
+      res.json({
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+      });
+    } catch (err: any) {
+      console.error("[auth] Login error:", err);
+      res.status(500).json({
+        message: "Login failed due to a server error.",
+        ...(process.env.NODE_ENV !== "production" && { detail: err.message }),
+      });
     }
-
-    const [user] = await db.select().from(users).where(eq(users.email, email)).limit(1);
-    if (!user) {
-      return res.status(401).json({ message: "Invalid email or password." });
-    }
-
-    const valid = await bcrypt.compare(password, user.passwordHash);
-    if (!valid) {
-      return res.status(401).json({ message: "Invalid email or password." });
-    }
-
-    req.session.userId = user.id;
-    req.session.userRole = user.role;
-    req.session.userName = user.name;
-
-    res.json({
-      id: user.id,
-      email: user.email,
-      name: user.name,
-      role: user.role,
-    });
   });
 
   // Logout

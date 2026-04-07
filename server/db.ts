@@ -8,8 +8,19 @@ if (!process.env.DATABASE_URL) {
   );
 }
 
+const isProduction = process.env.NODE_ENV === "production";
+
+// Strip sslmode from connection string — we handle SSL via the pool config directly.
+// pg v8+ treats sslmode=require as verify-full, which breaks with Supabase's certificates.
+const connectionString = process.env.DATABASE_URL.replace(
+  /[?&]sslmode=[^&]*/g,
+  "",
+);
+
 export const pool = new pg.Pool({
-  connectionString: process.env.DATABASE_URL,
+  connectionString,
+  // Supabase requires SSL in production; allow self-signed certs from their pooler
+  ssl: isProduction ? { rejectUnauthorized: false } : undefined,
 });
 
 export const db = drizzle(pool, {
