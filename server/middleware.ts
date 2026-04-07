@@ -10,7 +10,19 @@ export function setupSecurity(app: Express) {
   // Security headers
   app.use(
     helmet({
-      contentSecurityPolicy: isProduction ? undefined : false, // Relax CSP in dev for Vite HMR
+      contentSecurityPolicy: isProduction
+        ? {
+            directives: {
+              ...helmet.contentSecurityPolicy.getDefaultDirectives(),
+              "img-src": [
+                "'self'",
+                "data:",
+                "https://datastore.artlogic.net",
+                "https://*.supabase.co",
+              ],
+            },
+          }
+        : false, // Relax CSP in dev for Vite HMR
     }),
   );
 
