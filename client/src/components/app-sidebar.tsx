@@ -9,7 +9,9 @@ import {
   Activity,
   CalendarCheck,
   Receipt,
+  LogOut,
 } from "lucide-react";
+import { useAuth } from "@/hooks/use-auth";
 import {
   Sidebar,
   SidebarContent,
@@ -37,6 +39,7 @@ const navItems = [
 
 export function AppSidebar() {
   const [location] = useLocation();
+  const { user, logout } = useAuth();
   const { data: stats } = useQuery<{ overdueFollowups: number }>({ queryKey: ["/api/stats"] });
   const overdueCount = stats?.overdueFollowups || 0;
 
@@ -85,10 +88,22 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
-      <SidebarFooter className="p-3">
-        <div className="text-[11px] text-muted-foreground group-data-[collapsible=icon]:hidden">
-          Gallery Management System
-        </div>
+      <SidebarFooter className="p-3 space-y-2">
+        {user && (
+          <div className="flex items-center justify-between group-data-[collapsible=icon]:justify-center">
+            <div className="text-xs text-muted-foreground group-data-[collapsible=icon]:hidden">
+              <p className="font-medium text-foreground">{user.name}</p>
+              <p className="capitalize">{user.role}</p>
+            </div>
+            <button
+              onClick={() => logout()}
+              className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+              title="Cerrar sesión"
+            >
+              <LogOut className="h-4 w-4" />
+            </button>
+          </div>
+        )}
       </SidebarFooter>
     </Sidebar>
   );
