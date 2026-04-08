@@ -1,13 +1,13 @@
 import type { Express } from "express";
 import type { Server } from "http";
-import { ZodError } from "zod";
+import { z, ZodError } from "zod";
 import multer from "multer";
 import { storage } from "./storage";
 import { supabase, ensureBucket } from "./supabase";
 import { crmEvents } from "./events";
 import { requireRole } from "./auth";
 import { validateImage, processImage } from "./image";
-import { processIncomingMessage } from "./services/message-processor";
+
 import {
   insertContactSchema,
   insertArtworkSchema,
@@ -17,6 +17,7 @@ import {
   insertActivitySchema,
   insertFollowupSchema,
   insertInvoiceSchema,
+  pipelineStageEnum,
 } from "../shared/schema";
 import { generateInvoicePdf } from "./pdf";
 
@@ -452,6 +453,144 @@ export async function registerRoutes(server: Server, app: Express) {
     keyGenerator: (req: any) => req.ip || req.socket.remoteAddress || "unknown",
     message: { message: "Too many requests" },
   });
+
+  // Classified lead endpoint — n8n sends pre-classified leads here
+  const classifiedLeadSchema = z.object({
+    channel: z.enum(["email", "whatsapp", "instagram", "web_form", "artsy"]),
+    contactName: z.string().min(1).max(500),
+    contactEmail: z.string().email().max(500).nullable().optional(),
+    contactPhone: z.string().max(100).nullable().optional(),
+    contactType: z.enum(["collector", "artist", "institution", "gallery"]).default("collector"),
+    contactCity: z.string().max(200).nullable().optional(),
+    contactCountry: z.string().max(200).nullable().optional(),
+    intentType: z.string().max(200),
+    intentScore: z.number().min(0).max(100),
+    suggestedStage: pipelineStageEnum,
+    summary: z.string().max(2000),
+    artistsMentioned: z.array(z.string()).optional(),
+    preferredMedium: z.string().max(200).nullable().optional(),
+    language: z.enum(["es", "en", "other"]).default("es"),
+    messageBody: z.string().max(10000),
+    messageSubject: z.string().max(500).nullable().optional(),
+    draftReply: z.string().max(5000).nullable().optional(),
+  });
+
+  app.post("/api/webhooks/classified-lead", webhookLimiter, async (req, res) => {
+    try {
+      const data = classifiedLeadSchema.parse(req.body);
+
+      // 1. Find or create contact (dedup by email/phone)
+      let contact = await storage.findContactByEmailOrPhone(
+        data.contactEmail || undefined,
+        data.contactPhone || undefined,
+      );
+      let contactCreated = false;
+
+      if (!contact) {
+        contact = await storage.createContact({
+          name: data.contactName,
+          email: data.contactEmail || null,
+          phone: data.contactPhone || null,
+          type: data.contactType,
+          city: data.contactCity || null,
+          country: data.contactCountry || null,
+          leadSource: data.channel,
+          preferredChannel: data.channel === "whatsapp" ? "WhatsApp" : data.channel === "email" ? "Email" : null,
+          artistsOfInterest: data.artistsMentioned || [],
+          preferredMedium: data.preferredMedium || null,
+          relationshipLevel: "new",
+        });
+        contactCreated = true;
+      } else {
+        // Enrich existing contact with new data
+        const updates: Record<string, any> = {};
+        if (data.artistsMentioned?.length) {
+          const existing = contact.artistsOfInterest || [];
+          const merged = Array.from(new Set([...existing, ...data.artistsMentioned]));
+          if (merged.length > existing.length) updates.artistsOfInterest = merged;
+        }
+        if (data.preferredMedium && !contact.preferredMedium) updates.preferredMedium = data.preferredMedium;
+        if (data.contactCity && !contact.city) updates.city = data.contactCity;
+        if (data.contactCountry && !contact.country) updates.country = data.contactCountry;
+        if (Object.keys(updates).length > 0) {
+          contact = (await storage.updateContact(contact.id, updates))!;
+        }
+      }
+
+      // 2. Create deal if intent score warrants it
+      let deal = null;
+      if (data.intentScore >= 40) {
+        deal = await storage.createDeal({
+          title: data.messageSubject || `${data.intentType} — ${data.contactName}`,
+          contactId: contact.id,
+          contactName: contact.name,
+          stage: data.suggestedStage,
+          sourceChannel: data.channel === "web_form" ? "Website"
+            : data.channel === "whatsapp" ? "WhatsApp"
+            : data.channel === "instagram" ? "Instagram"
+            : data.channel === "email" ? "Email"
+            : data.channel === "artsy" ? "Artsy"
+            : "Website",
+          priority: data.intentScore >= 70 ? "high" : data.intentScore >= 50 ? "medium" : "low",
+          intentScore: data.intentScore,
+          notes: data.summary,
+          createdDate: new Date().toISOString(),
+          lastActivityAt: new Date().toISOString(),
+        });
+      }
+
+      // 3. Log activity
+      await storage.createActivity({
+        type: "message",
+        description: `[${data.channel}] ${data.summary}`,
+        contactId: contact.id,
+        dealId: deal?.id || null,
+        date: new Date().toISOString().split("T")[0],
+        contactName: contact.name,
+      });
+
+      // 4. Save raw message
+      await storage.createMessage({
+        channel: data.channel,
+        direction: "inbound",
+        senderName: data.contactName,
+        senderEmail: data.contactEmail || null,
+        senderPhone: data.contactPhone || null,
+        subject: data.messageSubject || null,
+        body: data.messageBody,
+        contactId: contact.id,
+        dealId: deal?.id || null,
+        status: "processed",
+        aiClassification: JSON.stringify({
+          intentType: data.intentType,
+          intentScore: data.intentScore,
+          suggestedStage: data.suggestedStage,
+          artistsMentioned: data.artistsMentioned,
+          language: data.language,
+        }),
+        createdAt: new Date().toISOString(),
+      });
+
+      // 5. Emit events
+      if (contactCreated) crmEvents.emitCrm("contact.created", { contact });
+      if (deal) crmEvents.emitCrm("deal.created", { deal });
+
+      res.status(201).json({
+        ok: true,
+        contactId: contact.id,
+        dealId: deal?.id || null,
+        contactCreated,
+      });
+    } catch (err) {
+      if (err instanceof ZodError) {
+        return res.status(400).json({ message: "Validation error", errors: err.errors });
+      }
+      console.error("[webhook/classified-lead] Error:", err);
+      res.status(500).json({ message: "Failed to process classified lead" });
+    }
+  });
+
+  // Legacy web-form endpoint — saves message as pending (no AI processing)
   app.post("/api/webhooks/web-form", webhookLimiter, async (req, res) => {
     const { name, email, phone, message, subject, artworkInterest } = req.body;
     if (!message && !artworkInterest) {
@@ -459,24 +598,29 @@ export async function registerRoutes(server: Server, app: Express) {
     }
 
     try {
-      const result = await processIncomingMessage({
+      const body = artworkInterest ? `${artworkInterest}\n\n${message || ""}`.trim() : message;
+      const msg = await storage.createMessage({
         channel: "web_form",
-        senderName: name || undefined,
-        senderEmail: email || undefined,
-        senderPhone: phone || undefined,
-        subject: subject || artworkInterest || undefined,
-        body: artworkInterest ? `${artworkInterest}\n\n${message || ""}`.trim() : message,
+        direction: "inbound",
+        senderName: name || null,
+        senderEmail: email || null,
+        senderPhone: phone || null,
+        subject: subject || artworkInterest || null,
+        body,
+        contactId: null,
+        dealId: null,
+        status: "pending",
+        createdAt: new Date().toISOString(),
       });
 
       res.status(201).json({
         ok: true,
-        messageId: result.message.id,
-        contactId: result.contact?.id || null,
-        dealId: result.deal?.id || null,
+        messageId: msg.id,
+        status: "pending",
       });
     } catch (err) {
       console.error("[webhook/web-form] Error:", err);
-      res.status(500).json({ message: "Failed to process message" });
+      res.status(500).json({ message: "Failed to save message" });
     }
   });
 

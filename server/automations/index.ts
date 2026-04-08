@@ -6,10 +6,6 @@
 
 // Active automations
 import "./auto-invoice";        // Auto-create invoice + recalc LTV on deal closed_won
-
-// Future automations (uncomment when ready)
-// import "./lead-classifier";      // AI-powered lead classification on deal.created
-// import "./followup-manager";     // AI-suggested follow-ups on stage changes
-// import "./channel-normalizer";   // Normalize incoming messages from WhatsApp, email, etc.
+import "./n8n-notifier";        // Forward CRM events to n8n via outbound webhook
 
 console.log("[automations] registered");

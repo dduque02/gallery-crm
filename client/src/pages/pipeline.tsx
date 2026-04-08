@@ -130,7 +130,7 @@ function DealForm({ onSuccess, contacts, artworks, initial }: { onSuccess: () =>
   const { toast } = useToast();
   const isEdit = !!initial;
   const [form, setForm] = useState<Partial<InsertDeal>>({
-    title: initial?.title || "", stage: initial?.stage || "new_inquiry",
+    title: initial?.title || "", stage: (initial?.stage as InsertDeal["stage"]) || "new_inquiry",
     priority: initial?.priority || "medium", value: initial?.value || 0,
     notes: initial?.notes || "", contactId: initial?.contactId || undefined,
     artworkId: initial?.artworkId || undefined,
@@ -244,7 +244,7 @@ function DealForm({ onSuccess, contacts, artworks, initial }: { onSuccess: () =>
         </div>
         <div>
           <Label className="text-xs">Stage</Label>
-          <Select value={form.stage || "new_inquiry"} onValueChange={v => setForm({ ...form, stage: v })}>
+          <Select value={form.stage || "new_inquiry"} onValueChange={v => setForm({ ...form, stage: v as InsertDeal["stage"] })}>
             <SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>{stages.map(s => <SelectItem key={s.key} value={s.key}>{s.label}</SelectItem>)}</SelectContent>
           </Select>

@@ -142,6 +142,18 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
     return next();
   }
 
+  // Bearer token auth (for n8n and external integrations)
+  const authHeader = req.headers.authorization;
+  if (authHeader?.startsWith("Bearer ")) {
+    const token = authHeader.slice(7);
+    const apiKey = process.env.CRM_API_KEY;
+    if (apiKey && token === apiKey) {
+      (req as any).isApiKey = true;
+      return next();
+    }
+    return res.status(401).json({ message: "Invalid API key." });
+  }
+
   // Dev bypass
   if (!authEnabled) {
     return next();
@@ -156,6 +168,11 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
 
 export function requireRole(...roles: string[]) {
   return (req: Request, res: Response, next: NextFunction) => {
+    // API key auth bypasses role check (n8n is trusted)
+    if ((req as any).isApiKey) {
+      return next();
+    }
+
     // Dev bypass
     if (!authEnabled) {
       return next();

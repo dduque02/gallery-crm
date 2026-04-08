@@ -2,6 +2,14 @@ import { pgTable, text, serial, integer, boolean, timestamp } from "drizzle-orm/
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
+// Pipeline stages — single source of truth
+export const PIPELINE_STAGES = [
+  "new_inquiry", "qualified", "artwork_presented",
+  "collector_engaged", "negotiation", "closed_won", "closed_lost",
+] as const;
+export type PipelineStage = typeof PIPELINE_STAGES[number];
+export const pipelineStageEnum = z.enum(PIPELINE_STAGES);
+
 // Users: authentication & roles
 export const users = pgTable("users", {
   id: serial("id").primaryKey(),
@@ -175,6 +183,7 @@ export const deals = pgTable("deals", {
 
 export const insertDealSchema = createInsertSchema(deals).omit({ id: true }).extend({
   title: z.string().min(1).max(500),
+  stage: pipelineStageEnum,
   notes: z.string().max(5000).nullable().optional(),
   lostReason: z.string().max(1000).nullable().optional(),
 });
